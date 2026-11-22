@@ -6,6 +6,7 @@ from typing import Any
 
 from app.store import store
 from app.services.base import BaseModuleService
+from app.services.snapshot_delivery import snapshot_delivery_service
 from app import persistence as persist
 
 
@@ -40,6 +41,28 @@ class ExportChannelService(BaseModuleService):
         else:
             raise ValueError(f"不支持的输出格式: {fmt}")
         return path
+
+    def deliver_snapshot_dataset(
+        self,
+        *,
+        channel_id: int,
+        run_id: int,
+        snapshot_ids: list[int] | None = None,
+        remark: str = "",
+    ) -> tuple[dict[str, Any] | None, str]:
+        """导出通道写快照数据集：按采集运行发布一份可独立回放的交付文件。
+
+        通道必须已启用。交付文件自包含，发布后即使本地快照被回收，文件仍完整可读。
+        """
+        channel = store.find(self.MODULE, channel_id)
+        if not channel or channel.get("status") != "已启用":
+            return None, f"导出通道{channel_id}未启用或不存在，无法交付快照数据集"
+        return snapshot_delivery_service.publish_for_run(
+            run_id=run_id,
+            snapshot_ids=snapshot_ids,
+            channel_id=channel_id,
+            remark=remark,
+        )
 
     def domain_snapshot(self) -> dict[str, Any]:
         base = super().domain_snapshot()

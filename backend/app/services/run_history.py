@@ -6,6 +6,7 @@ from typing import Any
 
 from app.store import store
 from app.services.base import BaseModuleService, register_hook
+from app.services.snapshot_delivery import snapshot_delivery_service
 from app import persistence as persist
 
 
@@ -78,6 +79,34 @@ class RunHistoryService(BaseModuleService):
         ]
         return combined[-limit:]
 
+    def delivery_scope(self, run_id: int) -> dict[str, Any]:
+        """运行历史取得某采集运行已发布的交付范围和待补清单。"""
+        deliveries = snapshot_delivery_service.list_deliveries(run_id=run_id)
+        scope: list[dict[str, Any]] = []
+        backfill: list[dict[str, Any]] = []
+        for record in deliveries:
+            dataset = snapshot_delivery_service.load_dataset_file(record["dataset_id"])
+            if dataset is None:
+                continue
+            scope.append({
+                "dataset_id": record["dataset_id"],
+                "published_at": record.get("published_at"),
+                "entry_count": record.get("entry_count"),
+                "full_count": record.get("full_count"),
+                "preview_only_count": record.get("preview_only_count"),
+                "backfill_count": record.get("backfill_count"),
+                "filename": record.get("filename"),
+                "body_checksum": record.get("body_checksum"),
+            })
+            backfill.extend(dataset.get("backfill", []))
+        return {
+            "run_id": run_id,
+            "delivery_count": len(scope),
+            "deliveries": scope,
+            "backfill": backfill,
+            "backfill_count": len(backfill),
+        }
+
     def domain_snapshot(self) -> dict[str, Any]:
         base = super().domain_snapshot()
         # 文件中的运行记录
@@ -90,4 +119,8 @@ class RunHistoryService(BaseModuleService):
         # 关联的schema校验报告
         schema_reports = persist.read_jsonl("reports", "schema_check_report.jsonl")
         base["triggered_schema"] = len([r for r in schema_reports if r.get("trigger") == "run_history_confirm"])
+        # 快照数据集交付范围
+        deliveries = snapshot_delivery_service.list_deliveries()
+        base["snapshot_deliveries"] = len(deliveries)
+        base["snapshot_backfill_items"] = sum(int(r.get("backfill_count", 0)) for r in deliveries)
         return base
